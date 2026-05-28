@@ -6,6 +6,8 @@ on:
   workflow_dispatch:
 
 env:
+  # Rust 1.75 jest wymagany przez RustDesk dla Windows/Linux (ABI sciter)
+  # ale generate-bridge potrzebuje nowszego - używamy stable dla bridge
   RUST_VERSION: "1.75"
   MAC_RUST_VERSION: "1.81"
   CARGO_NDK_VERSION: "3.1.2"
@@ -20,8 +22,8 @@ env:
 jobs:
 
   # ============================================================
-  # Krok wspólny: generuj Flutter-Rust bridge (wymagany przez
-  # wszystkie platformy)
+  # BRIDGE — generowanie kodu Flutter<->Rust
+  # Używamy oryginalnego workflow bridge.yml z repo
   # ============================================================
   generate-bridge:
     runs-on: ubuntu-22.04
@@ -30,23 +32,28 @@ jobs:
         with:
           submodules: recursive
 
-      - uses: dtolnay/rust-toolchain@v1
-        with:
-          toolchain: ${{ env.RUST_VERSION }}
+      # Stable (najnowszy) dla flutter_rust_bridge_codegen
+      - name: Install Rust stable (dla bridge)
+        uses: dtolnay/rust-toolchain@stable
 
-      - uses: subosito/flutter-action@v2.12.0
+      - name: Install Flutter
+        uses: subosito/flutter-action@v2.12.0
         with:
           channel: stable
           flutter-version: ${{ env.FLUTTER_VERSION }}
 
-      - name: Install bridge dependencies
+      - name: Install system deps
         run: |
           sudo apt-get update -y
           sudo apt-get install -y libgtk-3-dev
 
+      # flutter_rust_bridge_codegen 1.82.6 = ostatnia wersja v1.x
+      # kompatybilna z kodem RustDesk i Rust stable/edition2021
+      - name: Install flutter_rust_bridge_codegen
+        run: cargo install flutter_rust_bridge_codegen --version 1.82.6 --features uuid
+
       - name: Generate bridge
         run: |
-          cargo install flutter_rust_bridge_codegen --version 1.80.1 --features uuid
           flutter pub get
           ~/.cargo/bin/flutter_rust_bridge_codegen \
             --rust-input ./src/flutter_ffi.rs \
@@ -87,21 +94,47 @@ jobs:
           name: bridge-artifact
           path: ./
 
-      # ─── PATCH: wstaw własny serwer i klucz ───────────────────
+      # ─── PATCH serwera ────────────────────────────────────────
       - name: Patch custom server config
         shell: bash
         env:
           MY_SERVER: ${{ secrets.RENDEZVOUS_SERVER }}
           MY_KEY: ${{ secrets.RS_PUB_KEY }}
         run: |
-          sed -i "s|\"rs-ny.rustdesk.com\"|\"${MY_SERVER}\"|g" libs/hbb_common/src/config.rs
-          sed -i "s|\"rs-sg.rustdesk.com\".*||g"               libs/hbb_common/src/config.rs
-          sed -i "s|\"rs-ch.rustdesk.com\".*||g"               libs/hbb_common/src/config.rs
-          # Wstaw klucz na stałe (nadpisuje option_env!)
-          sed -i "s|_ => \"\"|_ => \"${MY_KEY}\"|g"            libs/hbb_common/src/config.rs
-          echo "=== Sprawdzenie patcha ==="
-          grep -n "RENDEZVOUS_SERVERS\|RS_PUB_KEY" libs/hbb_common/src/config.rs | head -20
-      # ──────────────────────────────────────────────────────────
+          CONFIG="libs/hbb_common/src/config.rs"
+
+          # Zamień wszystkie adresy serwerów publicznych na własny
+          # Używamy trybu wieloliniowego - zamieniamy całą tablicę RENDEZVOUS_SERVERS
+          python3 - <<'PYEOF'
+          import re, os
+          server = os.environ['MY_SERVER']
+          key    = os.environ['MY_KEY']
+          path   = 'libs/hbb_common/src/config.rs'
+          text   = open(path).read()
+
+          # Zamień tablicę serwerów
+          text = re.sub(
+            r'(pub const RENDEZVOUS_SERVERS[^=]*=\s*&\[)[^\]]*(\];)',
+            rf'\1"{server}",\2',
+            text, flags=re.DOTALL
+          )
+
+          # Zamień klucz - obsłuż oba wzorce (pusty string lub option_env)
+          text = re.sub(r'_ => ""', f'_ => "{key}"', text)
+          # Jeśli klucz jest podany bezpośrednio jako const
+          text = re.sub(
+            r'(pub const RS_PUB_KEY:\s*&str\s*=\s*)"[^"]*"(;)',
+            rf'\1"{key}"\2',
+            text
+          )
+
+          open(path, 'w').write(text)
+          print("=== Patch zakończony. Weryfikacja ===")
+          for i, line in enumerate(text.splitlines(), 1):
+            if 'RENDEZVOUS_SERVERS' in line or 'RS_PUB_KEY' in line or server in line:
+              print(f"{i}: {line}")
+          PYEOF
+      # ─────────────────────────────────────────────────────────
 
       - name: Install LLVM
         uses: KyleMayes/install-llvm-action@v1
@@ -114,14 +147,14 @@ jobs:
           channel: stable
           flutter-version: ${{ env.FLUTTER_VERSION }}
 
-      - name: Replace Flutter engine (custom rustdesk engine)
+      - name: Replace Flutter engine
         run: |
           flutter precache --windows
           Invoke-WebRequest -Uri https://github.com/rustdesk/engine/releases/download/main/windows-x64-release.zip -OutFile windows-x64-release.zip
           Expand-Archive -Path windows-x64-release.zip -DestinationPath windows-x64-release
           mv -Force windows-x64-release/* C:/hostedtoolcache/windows/flutter/stable-${{ env.FLUTTER_VERSION }}-x64/bin/cache/artifacts/engine/windows-x64-release/
 
-      - name: Install Rust
+      - name: Install Rust ${{ env.RUST_VERSION }}
         uses: dtolnay/rust-toolchain@v1
         with:
           toolchain: ${{ env.RUST_VERSION }}
@@ -152,8 +185,7 @@ jobs:
         run: python3 .\build.py --portable --hwcodec --flutter --vram --skip-portable-pack
 
       - name: Collect output
-        run: |
-          mv ./flutter/build/windows/x64/runner/Release ./rustdesk-windows
+        run: mv ./flutter/build/windows/x64/runner/Release ./rustdesk-windows
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -187,19 +219,36 @@ jobs:
           name: bridge-artifact
           path: ./
 
-      # ─── PATCH: wstaw własny serwer i klucz ───────────────────
+      # ─── PATCH serwera ────────────────────────────────────────
       - name: Patch custom server config
         env:
           MY_SERVER: ${{ secrets.RENDEZVOUS_SERVER }}
           MY_KEY: ${{ secrets.RS_PUB_KEY }}
         run: |
-          sed -i "s|\"rs-ny.rustdesk.com\"|\"${MY_SERVER}\"|g" libs/hbb_common/src/config.rs
-          sed -i "s|\"rs-sg.rustdesk.com\".*||g"               libs/hbb_common/src/config.rs
-          sed -i "s|\"rs-ch.rustdesk.com\".*||g"               libs/hbb_common/src/config.rs
-          sed -i "s|_ => \"\"|_ => \"${MY_KEY}\"|g"            libs/hbb_common/src/config.rs
-          echo "=== Sprawdzenie patcha ==="
-          grep -n "RENDEZVOUS_SERVERS\|RS_PUB_KEY" libs/hbb_common/src/config.rs | head -20
-      # ──────────────────────────────────────────────────────────
+          python3 - <<'PYEOF'
+          import re, os
+          server = os.environ['MY_SERVER']
+          key    = os.environ['MY_KEY']
+          path   = 'libs/hbb_common/src/config.rs'
+          text   = open(path).read()
+          text = re.sub(
+            r'(pub const RENDEZVOUS_SERVERS[^=]*=\s*&\[)[^\]]*(\];)',
+            rf'\1"{server}",\2',
+            text, flags=re.DOTALL
+          )
+          text = re.sub(r'_ => ""', f'_ => "{key}"', text)
+          text = re.sub(
+            r'(pub const RS_PUB_KEY:\s*&str\s*=\s*)"[^"]*"(;)',
+            rf'\1"{key}"\2',
+            text
+          )
+          open(path, 'w').write(text)
+          print("=== Patch zakończony. Weryfikacja ===")
+          for i, line in enumerate(text.splitlines(), 1):
+            if 'RENDEZVOUS_SERVERS' in line or 'RS_PUB_KEY' in line or server in line:
+              print(f"{i}: {line}")
+          PYEOF
+      # ─────────────────────────────────────────────────────────
 
       - name: Install system deps
         run: |
@@ -225,7 +274,7 @@ jobs:
           channel: stable
           flutter-version: ${{ env.FLUTTER_VERSION }}
 
-      - name: Install Rust
+      - name: Install Rust ${{ env.RUST_VERSION }}
         uses: dtolnay/rust-toolchain@v1
         with:
           toolchain: ${{ env.RUST_VERSION }}
@@ -249,13 +298,11 @@ jobs:
             --x-install-root="$VCPKG_ROOT/installed"
 
       - name: Build RustDesk
-        run: |
-          python3 build.py --hwcodec --flutter --skip-portable-pack
-          
+        run: python3 build.py --hwcodec --flutter --skip-portable-pack
+
       - name: Build .deb package
-        run: |
-          python3 build.py --hwcodec --flutter --package
-          
+        run: python3 build.py --hwcodec --flutter --package
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -265,7 +312,7 @@ jobs:
             ./rustdesk-*.tar.gz
 
   # ============================================================
-  # macOS (Intel x64 + Apple Silicon arm64)
+  # macOS — Intel x64 + Apple Silicon arm64
   # ============================================================
   build-macos:
     name: macOS (${{ matrix.job.arch }})
@@ -275,7 +322,7 @@ jobs:
       fail-fast: false
       matrix:
         job:
-          - { arch: x86_64, target: x86_64-apple-darwin,  vcpkg-triplet: x64-osx    }
+          - { arch: x86_64, target: x86_64-apple-darwin,  vcpkg-triplet: x64-osx   }
           - { arch: arm64,  target: aarch64-apple-darwin,  vcpkg-triplet: arm64-osx  }
     steps:
       - name: Export cache env
@@ -296,24 +343,39 @@ jobs:
           name: bridge-artifact
           path: ./
 
-      # ─── PATCH: wstaw własny serwer i klucz ───────────────────
+      # ─── PATCH serwera (macOS: python3 bo sed -i '' jest kapryśny) ──
       - name: Patch custom server config
         env:
           MY_SERVER: ${{ secrets.RENDEZVOUS_SERVER }}
           MY_KEY: ${{ secrets.RS_PUB_KEY }}
         run: |
-          sed -i '' "s|\"rs-ny.rustdesk.com\"|\"${MY_SERVER}\"|g" libs/hbb_common/src/config.rs
-          sed -i '' "s|\"rs-sg.rustdesk.com\".*||g"               libs/hbb_common/src/config.rs
-          sed -i '' "s|\"rs-ch.rustdesk.com\".*||g"               libs/hbb_common/src/config.rs
-          sed -i '' "s|_ => \"\"|_ => \"${MY_KEY}\"|g"            libs/hbb_common/src/config.rs
-          echo "=== Sprawdzenie patcha ==="
-          grep -n "RENDEZVOUS_SERVERS\|RS_PUB_KEY" libs/hbb_common/src/config.rs | head -20
-      # ──────────────────────────────────────────────────────────
-      # UWAGA: sed na macOS wymaga '' po -i (inny BSD sed niż GNU)
+          python3 - <<'PYEOF'
+          import re, os
+          server = os.environ['MY_SERVER']
+          key    = os.environ['MY_KEY']
+          path   = 'libs/hbb_common/src/config.rs'
+          text   = open(path).read()
+          text = re.sub(
+            r'(pub const RENDEZVOUS_SERVERS[^=]*=\s*&\[)[^\]]*(\];)',
+            rf'\1"{server}",\2',
+            text, flags=re.DOTALL
+          )
+          text = re.sub(r'_ => ""', f'_ => "{key}"', text)
+          text = re.sub(
+            r'(pub const RS_PUB_KEY:\s*&str\s*=\s*)"[^"]*"(;)',
+            rf'\1"{key}"\2',
+            text
+          )
+          open(path, 'w').write(text)
+          print("=== Patch zakończony. Weryfikacja ===")
+          for i, line in enumerate(text.splitlines(), 1):
+            if 'RENDEZVOUS_SERVERS' in line or 'RS_PUB_KEY' in line or server in line:
+              print(f"{i}: {line}")
+          PYEOF
+      # ─────────────────────────────────────────────────────────
 
       - name: Install deps (Homebrew)
-        run: |
-          brew install nasm yasm cmake ninja pkg-config
+        run: brew install nasm yasm cmake ninja pkg-config
 
       - name: Install Flutter
         uses: subosito/flutter-action@v2.12.0
@@ -321,7 +383,7 @@ jobs:
           channel: stable
           flutter-version: ${{ env.FLUTTER_VERSION }}
 
-      - name: Install Rust
+      - name: Install Rust ${{ env.MAC_RUST_VERSION }}
         uses: dtolnay/rust-toolchain@v1
         with:
           toolchain: ${{ env.MAC_RUST_VERSION }}
@@ -383,19 +445,36 @@ jobs:
           name: bridge-artifact
           path: ./
 
-      # ─── PATCH: wstaw własny serwer i klucz ───────────────────
+      # ─── PATCH serwera ────────────────────────────────────────
       - name: Patch custom server config
         env:
           MY_SERVER: ${{ secrets.RENDEZVOUS_SERVER }}
           MY_KEY: ${{ secrets.RS_PUB_KEY }}
         run: |
-          sed -i "s|\"rs-ny.rustdesk.com\"|\"${MY_SERVER}\"|g" libs/hbb_common/src/config.rs
-          sed -i "s|\"rs-sg.rustdesk.com\".*||g"               libs/hbb_common/src/config.rs
-          sed -i "s|\"rs-ch.rustdesk.com\".*||g"               libs/hbb_common/src/config.rs
-          sed -i "s|_ => \"\"|_ => \"${MY_KEY}\"|g"            libs/hbb_common/src/config.rs
-          echo "=== Sprawdzenie patcha ==="
-          grep -n "RENDEZVOUS_SERVERS\|RS_PUB_KEY" libs/hbb_common/src/config.rs | head -20
-      # ──────────────────────────────────────────────────────────
+          python3 - <<'PYEOF'
+          import re, os
+          server = os.environ['MY_SERVER']
+          key    = os.environ['MY_KEY']
+          path   = 'libs/hbb_common/src/config.rs'
+          text   = open(path).read()
+          text = re.sub(
+            r'(pub const RENDEZVOUS_SERVERS[^=]*=\s*&\[)[^\]]*(\];)',
+            rf'\1"{server}",\2',
+            text, flags=re.DOTALL
+          )
+          text = re.sub(r'_ => ""', f'_ => "{key}"', text)
+          text = re.sub(
+            r'(pub const RS_PUB_KEY:\s*&str\s*=\s*)"[^"]*"(;)',
+            rf'\1"{key}"\2',
+            text
+          )
+          open(path, 'w').write(text)
+          print("=== Patch zakończony. Weryfikacja ===")
+          for i, line in enumerate(text.splitlines(), 1):
+            if 'RENDEZVOUS_SERVERS' in line or 'RS_PUB_KEY' in line or server in line:
+              print(f"{i}: {line}")
+          PYEOF
+      # ─────────────────────────────────────────────────────────
 
       - name: Install system deps
         run: |
@@ -412,7 +491,7 @@ jobs:
           channel: stable
           flutter-version: ${{ env.ANDROID_FLUTTER_VERSION }}
 
-      - name: Setup Java
+      - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -424,7 +503,7 @@ jobs:
           ndk-version: ${{ env.NDK_VERSION }}
           local-cache: true
 
-      - name: Install Rust + Android targets
+      - name: Install Rust ${{ env.RUST_VERSION }} + Android targets
         uses: dtolnay/rust-toolchain@v1
         with:
           toolchain: ${{ env.RUST_VERSION }}
@@ -451,8 +530,7 @@ jobs:
             --x-install-root="$VCPKG_ROOT/installed"
 
       - name: Build APK
-        run: |
-          python3 build.py --flutter --android-aarch64
+        run: python3 build.py --flutter --android-aarch64
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
