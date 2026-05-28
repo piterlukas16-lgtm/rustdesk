@@ -443,6 +443,22 @@ jobs:
             --triplet arm64-android \
             --x-install-root="$VCPKG_ROOT/installed"
 
+      - name: Patch Kotlin version
+        shell: python
+        run: |
+          import re
+          for path in ['flutter/android/build.gradle', 'flutter/android/settings.gradle']:
+            try:
+              t = open(path, encoding='utf-8').read()
+              t = re.sub(r"ext\.kotlin_version\s*=\s*['\"][^'\"]*['\"]",
+                         "ext.kotlin_version = '1.9.25'", t)
+              t = re.sub(r'(id\s+.org\.jetbrains\.kotlin\.android.\s+version\s+.)[^.]*(.)',
+                         r'\g<1>1.9.25\2', t)
+              open(path, 'w', encoding='utf-8').write(t)
+              print(f"Patched {path}")
+            except FileNotFoundError:
+              print(f"Not found: {path}")
+
       - name: Build APK
         run: |
           cd flutter
