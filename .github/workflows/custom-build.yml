@@ -1,0 +1,461 @@
+name: RustDesk Custom Client Build
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+env:
+  RUST_VERSION: "1.75"
+  MAC_RUST_VERSION: "1.81"
+  CARGO_NDK_VERSION: "3.1.2"
+  LLVM_VERSION: "15.0.6"
+  FLUTTER_VERSION: "3.24.5"
+  ANDROID_FLUTTER_VERSION: "3.24.5"
+  VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+  VCPKG_COMMIT_ID: "120deac3062162151622ca4860575a33844ba10b"
+  NDK_VERSION: "r27c"
+  VERSION: "1.4.6"
+
+jobs:
+
+  # ============================================================
+  # Krok wspólny: generuj Flutter-Rust bridge (wymagany przez
+  # wszystkie platformy)
+  # ============================================================
+  generate-bridge:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+
+      - uses: subosito/flutter-action@v2.12.0
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+
+      - name: Install bridge dependencies
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y libgtk-3-dev
+
+      - name: Generate bridge
+        run: |
+          cargo install flutter_rust_bridge_codegen --version 1.80.1 --features uuid
+          flutter pub get
+          ~/.cargo/bin/flutter_rust_bridge_codegen \
+            --rust-input ./src/flutter_ffi.rs \
+            --dart-output ./flutter/lib/generated_bridge.dart \
+            --class-name RustdeskImpl
+
+      - name: Upload bridge artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: bridge-artifact
+          path: |
+            ./src/bridge_generated.rs
+            ./flutter/lib/generated_bridge.dart
+
+  # ============================================================
+  # WINDOWS x64
+  # ============================================================
+  build-windows:
+    name: Windows x64
+    needs: [generate-bridge]
+    runs-on: windows-2022
+    steps:
+      - name: Export cache env
+        uses: actions/github-script@v6
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Restore bridge
+        uses: actions/download-artifact@v4
+        with:
+          name: bridge-artifact
+          path: ./
+
+      # ─── PATCH: wstaw własny serwer i klucz ───────────────────
+      - name: Patch custom server config
+        shell: bash
+        env:
+          MY_SERVER: ${{ secrets.RENDEZVOUS_SERVER }}
+          MY_KEY: ${{ secrets.RS_PUB_KEY }}
+        run: |
+          sed -i "s|\"rs-ny.rustdesk.com\"|\"${MY_SERVER}\"|g" libs/hbb_common/src/config.rs
+          sed -i "s|\"rs-sg.rustdesk.com\".*||g"               libs/hbb_common/src/config.rs
+          sed -i "s|\"rs-ch.rustdesk.com\".*||g"               libs/hbb_common/src/config.rs
+          # Wstaw klucz na stałe (nadpisuje option_env!)
+          sed -i "s|_ => \"\"|_ => \"${MY_KEY}\"|g"            libs/hbb_common/src/config.rs
+          echo "=== Sprawdzenie patcha ==="
+          grep -n "RENDEZVOUS_SERVERS\|RS_PUB_KEY" libs/hbb_common/src/config.rs | head -20
+      # ──────────────────────────────────────────────────────────
+
+      - name: Install LLVM
+        uses: KyleMayes/install-llvm-action@v1
+        with:
+          version: ${{ env.LLVM_VERSION }}
+
+      - name: Install Flutter
+        uses: subosito/flutter-action@v2.12.0
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+
+      - name: Replace Flutter engine (custom rustdesk engine)
+        run: |
+          flutter precache --windows
+          Invoke-WebRequest -Uri https://github.com/rustdesk/engine/releases/download/main/windows-x64-release.zip -OutFile windows-x64-release.zip
+          Expand-Archive -Path windows-x64-release.zip -DestinationPath windows-x64-release
+          mv -Force windows-x64-release/* C:/hostedtoolcache/windows/flutter/stable-${{ env.FLUTTER_VERSION }}-x64/bin/cache/artifacts/engine/windows-x64-release/
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          targets: x86_64-pc-windows-msvc
+          components: rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: windows-2022
+
+      - name: Setup vcpkg
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgDirectory: C:\vcpkg
+          vcpkgGitCommitId: ${{ env.VCPKG_COMMIT_ID }}
+          doNotCache: false
+
+      - name: Install vcpkg deps
+        shell: bash
+        env:
+          VCPKG_DEFAULT_HOST_TRIPLET: x64-windows-static
+        run: |
+          $VCPKG_ROOT/vcpkg install \
+            --triplet x64-windows-static \
+            --x-install-root="$VCPKG_ROOT/installed"
+
+      - name: Build RustDesk
+        run: python3 .\build.py --portable --hwcodec --flutter --vram --skip-portable-pack
+
+      - name: Collect output
+        run: |
+          mv ./flutter/build/windows/x64/runner/Release ./rustdesk-windows
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rustdesk-windows-x64
+          path: rustdesk-windows/
+
+  # ============================================================
+  # LINUX x64
+  # ============================================================
+  build-linux:
+    name: Linux x64
+    needs: [generate-bridge]
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Export cache env
+        uses: actions/github-script@v6
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Restore bridge
+        uses: actions/download-artifact@v4
+        with:
+          name: bridge-artifact
+          path: ./
+
+      # ─── PATCH: wstaw własny serwer i klucz ───────────────────
+      - name: Patch custom server config
+        env:
+          MY_SERVER: ${{ secrets.RENDEZVOUS_SERVER }}
+          MY_KEY: ${{ secrets.RS_PUB_KEY }}
+        run: |
+          sed -i "s|\"rs-ny.rustdesk.com\"|\"${MY_SERVER}\"|g" libs/hbb_common/src/config.rs
+          sed -i "s|\"rs-sg.rustdesk.com\".*||g"               libs/hbb_common/src/config.rs
+          sed -i "s|\"rs-ch.rustdesk.com\".*||g"               libs/hbb_common/src/config.rs
+          sed -i "s|_ => \"\"|_ => \"${MY_KEY}\"|g"            libs/hbb_common/src/config.rs
+          echo "=== Sprawdzenie patcha ==="
+          grep -n "RENDEZVOUS_SERVERS\|RS_PUB_KEY" libs/hbb_common/src/config.rs | head -20
+      # ──────────────────────────────────────────────────────────
+
+      - name: Install system deps
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y \
+            g++ gcc git curl wget nasm yasm \
+            libgtk-3-dev clang \
+            libxcb-randr0-dev libxdo-dev libxfixes-dev \
+            libxcb-shape0-dev libxcb-xfixes0-dev \
+            libasound2-dev libpulse-dev cmake make \
+            libclang-dev ninja-build \
+            libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
+            libpam0g-dev zip unzip python3-pip
+
+      - name: Install LLVM
+        uses: KyleMayes/install-llvm-action@v1
+        with:
+          version: ${{ env.LLVM_VERSION }}
+
+      - name: Install Flutter
+        uses: subosito/flutter-action@v2.12.0
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          targets: x86_64-unknown-linux-gnu
+          components: rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: ubuntu-22.04
+
+      - name: Setup vcpkg
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgGitCommitId: ${{ env.VCPKG_COMMIT_ID }}
+          doNotCache: false
+
+      - name: Install vcpkg deps
+        run: |
+          $VCPKG_ROOT/vcpkg install \
+            --triplet x64-linux \
+            --x-install-root="$VCPKG_ROOT/installed"
+
+      - name: Build RustDesk
+        run: |
+          python3 build.py --hwcodec --flutter --skip-portable-pack
+          
+      - name: Build .deb package
+        run: |
+          python3 build.py --hwcodec --flutter --package
+          
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rustdesk-linux-x64
+          path: |
+            ./rustdesk-*.deb
+            ./rustdesk-*.tar.gz
+
+  # ============================================================
+  # macOS (Intel x64 + Apple Silicon arm64)
+  # ============================================================
+  build-macos:
+    name: macOS (${{ matrix.job.arch }})
+    needs: [generate-bridge]
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        job:
+          - { arch: x86_64, target: x86_64-apple-darwin,  vcpkg-triplet: x64-osx    }
+          - { arch: arm64,  target: aarch64-apple-darwin,  vcpkg-triplet: arm64-osx  }
+    steps:
+      - name: Export cache env
+        uses: actions/github-script@v6
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Restore bridge
+        uses: actions/download-artifact@v4
+        with:
+          name: bridge-artifact
+          path: ./
+
+      # ─── PATCH: wstaw własny serwer i klucz ───────────────────
+      - name: Patch custom server config
+        env:
+          MY_SERVER: ${{ secrets.RENDEZVOUS_SERVER }}
+          MY_KEY: ${{ secrets.RS_PUB_KEY }}
+        run: |
+          sed -i '' "s|\"rs-ny.rustdesk.com\"|\"${MY_SERVER}\"|g" libs/hbb_common/src/config.rs
+          sed -i '' "s|\"rs-sg.rustdesk.com\".*||g"               libs/hbb_common/src/config.rs
+          sed -i '' "s|\"rs-ch.rustdesk.com\".*||g"               libs/hbb_common/src/config.rs
+          sed -i '' "s|_ => \"\"|_ => \"${MY_KEY}\"|g"            libs/hbb_common/src/config.rs
+          echo "=== Sprawdzenie patcha ==="
+          grep -n "RENDEZVOUS_SERVERS\|RS_PUB_KEY" libs/hbb_common/src/config.rs | head -20
+      # ──────────────────────────────────────────────────────────
+      # UWAGA: sed na macOS wymaga '' po -i (inny BSD sed niż GNU)
+
+      - name: Install deps (Homebrew)
+        run: |
+          brew install nasm yasm cmake ninja pkg-config
+
+      - name: Install Flutter
+        uses: subosito/flutter-action@v2.12.0
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: ${{ env.MAC_RUST_VERSION }}
+          targets: ${{ matrix.job.target }}
+          components: rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: macos-${{ matrix.job.arch }}
+
+      - name: Setup vcpkg
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgGitCommitId: ${{ env.VCPKG_COMMIT_ID }}
+          doNotCache: false
+
+      - name: Install vcpkg deps
+        run: |
+          $VCPKG_ROOT/vcpkg install \
+            --triplet ${{ matrix.job.vcpkg-triplet }} \
+            --x-install-root="$VCPKG_ROOT/installed"
+
+      - name: Build RustDesk
+        env:
+          MACOSX_DEPLOYMENT_TARGET: "10.14"
+        run: |
+          flutter config --enable-macos-desktop
+          python3 build.py --flutter --hwcodec
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rustdesk-macos-${{ matrix.job.arch }}
+          path: ./flutter/build/macos/Build/Products/Release/RustDesk.app
+
+  # ============================================================
+  # ANDROID arm64
+  # ============================================================
+  build-android:
+    name: Android arm64
+    needs: [generate-bridge]
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Export cache env
+        uses: actions/github-script@v6
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Restore bridge
+        uses: actions/download-artifact@v4
+        with:
+          name: bridge-artifact
+          path: ./
+
+      # ─── PATCH: wstaw własny serwer i klucz ───────────────────
+      - name: Patch custom server config
+        env:
+          MY_SERVER: ${{ secrets.RENDEZVOUS_SERVER }}
+          MY_KEY: ${{ secrets.RS_PUB_KEY }}
+        run: |
+          sed -i "s|\"rs-ny.rustdesk.com\"|\"${MY_SERVER}\"|g" libs/hbb_common/src/config.rs
+          sed -i "s|\"rs-sg.rustdesk.com\".*||g"               libs/hbb_common/src/config.rs
+          sed -i "s|\"rs-ch.rustdesk.com\".*||g"               libs/hbb_common/src/config.rs
+          sed -i "s|_ => \"\"|_ => \"${MY_KEY}\"|g"            libs/hbb_common/src/config.rs
+          echo "=== Sprawdzenie patcha ==="
+          grep -n "RENDEZVOUS_SERVERS\|RS_PUB_KEY" libs/hbb_common/src/config.rs | head -20
+      # ──────────────────────────────────────────────────────────
+
+      - name: Install system deps
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y \
+            g++ gcc git curl wget \
+            libgtk-3-dev clang cmake ninja-build \
+            libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
+            python3-pip zip
+
+      - name: Install Flutter
+        uses: subosito/flutter-action@v2.12.0
+        with:
+          channel: stable
+          flutter-version: ${{ env.ANDROID_FLUTTER_VERSION }}
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Android NDK
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: ${{ env.NDK_VERSION }}
+          local-cache: true
+
+      - name: Install Rust + Android targets
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          targets: aarch64-linux-android
+          components: rustfmt
+
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk --version ${{ env.CARGO_NDK_VERSION }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: android-arm64
+
+      - name: Setup vcpkg
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgGitCommitId: ${{ env.VCPKG_COMMIT_ID }}
+          doNotCache: false
+
+      - name: Install vcpkg deps (android arm64)
+        run: |
+          $VCPKG_ROOT/vcpkg install \
+            --triplet arm64-android \
+            --x-install-root="$VCPKG_ROOT/installed"
+
+      - name: Build APK
+        run: |
+          python3 build.py --flutter --android-aarch64
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: rustdesk-android-arm64
+          path: ./flutter/build/app/outputs/flutter-apk/app-release.apk
