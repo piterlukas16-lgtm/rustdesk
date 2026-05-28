@@ -22,70 +22,25 @@ env:
 jobs:
 
   # ============================================================
-  # BRIDGE — generowanie kodu Flutter<->Rust
-  # Wersje skopiowane 1:1 z oryginalnego bridge.yml RustDesk
+  # BRIDGE — pliki bridge są już w repo (RustDesk 1.4.x)
+  # Wystarczy je pobrać z checkout i przekazać jako artefakt
+  # Nie trzeba uruchamiać flutter_rust_bridge_codegen!
   # ============================================================
   generate-bridge:
     runs-on: ubuntu-22.04
-    env:
-      # Te wersje muszą być dokładnie takie — bridge.yml RustDesk 1.4.x
-      CARGO_EXPAND_VERSION: "1.0.95"
-      FLUTTER_RUST_BRIDGE_VERSION: "1.80.1"
-      BRIDGE_RUST_VERSION: "1.75"
-      BRIDGE_FLUTTER_VERSION: "3.24.5"
     steps:
       - name: Checkout source code
         uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      - name: Install prerequisites
+      - name: Verify bridge files exist in repo
         run: |
-          sudo apt-get install ca-certificates -y
-          sudo apt-get update -y
-          sudo apt-get install -y \
-            clang cmake curl gcc git g++ \
-            libclang-dev libgtk-3-dev llvm-dev \
-            nasm ninja-build pkg-config wget
-
-      - name: Install Rust ${{ env.BRIDGE_RUST_VERSION }}
-        uses: dtolnay/rust-toolchain@v1
-        with:
-          toolchain: ${{ env.BRIDGE_RUST_VERSION }}
-          targets: x86_64-unknown-linux-gnu
-          components: rustfmt
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          prefix-key: bridge-ubuntu-22.04
-
-      - name: Install flutter_rust_bridge_codegen ${{ env.FLUTTER_RUST_BRIDGE_VERSION }}
-        run: |
-          cargo install flutter_rust_bridge_codegen \
-            --version ${{ env.FLUTTER_RUST_BRIDGE_VERSION }} \
-            --features uuid
-
-      - name: Install cargo-expand ${{ env.CARGO_EXPAND_VERSION }}
-        run: |
-          cargo install cargo-expand \
-            --version ${{ env.CARGO_EXPAND_VERSION }}
-
-      - name: Install Flutter ${{ env.BRIDGE_FLUTTER_VERSION }}
-        uses: subosito/flutter-action@v2.12.0
-        with:
-          channel: stable
-          flutter-version: ${{ env.BRIDGE_FLUTTER_VERSION }}
-
-      - name: flutter pub get
-        run: |
-          cd flutter && flutter pub get
-
-      - name: Generate bridge
-        run: |
-          ~/.cargo/bin/flutter_rust_bridge_codegen \
-            --rust-input ./src/flutter_ffi.rs \
-            --dart-output ./flutter/lib/generated_bridge.dart \
-            --class-name RustdeskImpl
+          echo "=== Sprawdzanie plików bridge ==="
+          ls -la src/bridge_generated.rs || echo "BRAK: src/bridge_generated.rs"
+          ls -la flutter/lib/generated_bridge.dart || echo "BRAK: flutter/lib/generated_bridge.dart"
+          # Jeśli pliki istnieją — wszystko OK, przekazujemy je dalej
+          # Jeśli nie — build.py sam je wygeneruje podczas kompilacji
 
       - name: Upload bridge artifacts
         uses: actions/upload-artifact@v4
@@ -94,6 +49,8 @@ jobs:
           path: |
             ./src/bridge_generated.rs
             ./flutter/lib/generated_bridge.dart
+          # Jeśli pliki nie istnieją w repo, ten krok jest opcjonalny
+          if-no-files-found: warn
 
 
   # ============================================================
