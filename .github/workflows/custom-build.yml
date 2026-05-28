@@ -54,7 +54,8 @@ jobs:
 
       - name: Generate bridge
         run: |
-          flutter pub get
+          # pubspec.yaml jest w podkatalogu flutter/
+          cd flutter && flutter pub get && cd ..
           ~/.cargo/bin/flutter_rust_bridge_codegen \
             --rust-input ./src/flutter_ffi.rs \
             --dart-output ./flutter/lib/generated_bridge.dart \
