@@ -56,39 +56,35 @@ jobs:
         env:
           MY_SERVER: ${{ secrets.RENDEZVOUS_SERVER }}
           MY_KEY: ${{ secrets.RS_PUB_KEY }}
+          PYTHONIOENCODING: "utf-8"
+          PYTHONUTF8: "1"
         run: |
-          CONFIG="libs/hbb_common/src/config.rs"
-
-          # Zamień wszystkie adresy serwerów publicznych na własny
-          # Używamy trybu wieloliniowego - zamieniamy całą tablicę RENDEZVOUS_SERVERS
           python3 - <<'PYEOF'
-          import re, os
-          server = os.environ['MY_SERVER']
-          key    = os.environ['MY_KEY']
-          path   = 'libs/hbb_common/src/config.rs'
-          text   = open(path).read()
-
-          # Zamień tablicę serwerów
-          text = re.sub(
-            r'(pub const RENDEZVOUS_SERVERS[^=]*=\s*&\[)[^\]]*(\];)',
-            rf'\1"{server}",\2',
-            text, flags=re.DOTALL
-          )
-
-          # Zamień klucz - obsłuż oba wzorce (pusty string lub option_env)
-          text = re.sub(r'_ => ""', f'_ => "{key}"', text)
-          # Jeśli klucz jest podany bezpośrednio jako const
-          text = re.sub(
-            r'(pub const RS_PUB_KEY:\s*&str\s*=\s*)"[^"]*"(;)',
-            rf'\1"{key}"\2',
-            text
-          )
-
-          open(path, 'w').write(text)
-          print("=== Patch zakończony. Weryfikacja ===")
-          for i, line in enumerate(text.splitlines(), 1):
-            if 'RENDEZVOUS_SERVERS' in line or 'RS_PUB_KEY' in line or server in line:
-              print(f"{i}: {line}")
+import re, os, sys
+# Wymuś UTF-8 na Windows (cp1252 nie obsługuje polskich znaków w komentarzach)
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8')
+server = os.environ['MY_SERVER']
+key    = os.environ['MY_KEY']
+path   = 'libs/hbb_common/src/config.rs'
+text   = open(path, encoding='utf-8').read()
+text = re.sub(
+    r'(pub const RENDEZVOUS_SERVERS[^=]*=\s*&\[)[^\]]*(\];)',
+    lambda m: m.group(1) + '"' + server + '",' + m.group(2),
+    text, flags=re.DOTALL
+)
+text = re.sub(r'_ => ""', '_ => "' + key + '"', text)
+text = re.sub(
+    r'(pub const RS_PUB_KEY:\s*&str\s*=\s*)"[^"]*"(;)',
+    r'"' + key + r'"',
+    text
+)
+open(path, 'w', encoding='utf-8').write(text)
+found = [(i+1, l) for i,l in enumerate(text.splitlines())
+         if 'RENDEZVOUS_SERVERS' in l or 'RS_PUB_KEY' in l or server in l]
+for i, l in found:
+    sys.stdout.buffer.write(f"{i}: {l}
+".encode('utf-8'))
           PYEOF
       # ─────────────────────────────────────────────────────────
 
@@ -181,7 +177,7 @@ jobs:
           server = os.environ['MY_SERVER']
           key    = os.environ['MY_KEY']
           path   = 'libs/hbb_common/src/config.rs'
-          text   = open(path).read()
+          text   = open(path, encoding='utf-8').read()
           text = re.sub(
             r'(pub const RENDEZVOUS_SERVERS[^=]*=\s*&\[)[^\]]*(\];)',
             rf'\1"{server}",\2',
@@ -193,7 +189,7 @@ jobs:
             rf'\1"{key}"\2',
             text
           )
-          open(path, 'w').write(text)
+          open(path, 'w', encoding='utf-8').write(text)
           print("=== Patch zakończony. Weryfikacja ===")
           for i, line in enumerate(text.splitlines(), 1):
             if 'RENDEZVOUS_SERVERS' in line or 'RS_PUB_KEY' in line or server in line:
@@ -204,6 +200,8 @@ jobs:
       - name: Install system deps
         run: |
           sudo apt-get update -y
+          # libunwind-dev wymagany przez libgstreamer1.0-dev na ubuntu-22.04
+          sudo apt-get install -y libunwind-dev
           sudo apt-get install -y \
             g++ gcc git curl wget nasm yasm \
             libgtk-3-dev clang \
@@ -300,7 +298,7 @@ jobs:
           server = os.environ['MY_SERVER']
           key    = os.environ['MY_KEY']
           path   = 'libs/hbb_common/src/config.rs'
-          text   = open(path).read()
+          text   = open(path, encoding='utf-8').read()
           text = re.sub(
             r'(pub const RENDEZVOUS_SERVERS[^=]*=\s*&\[)[^\]]*(\];)',
             rf'\1"{server}",\2',
@@ -312,7 +310,7 @@ jobs:
             rf'\1"{key}"\2',
             text
           )
-          open(path, 'w').write(text)
+          open(path, 'w', encoding='utf-8').write(text)
           print("=== Patch zakończony. Weryfikacja ===")
           for i, line in enumerate(text.splitlines(), 1):
             if 'RENDEZVOUS_SERVERS' in line or 'RS_PUB_KEY' in line or server in line:
@@ -397,7 +395,7 @@ jobs:
           server = os.environ['MY_SERVER']
           key    = os.environ['MY_KEY']
           path   = 'libs/hbb_common/src/config.rs'
-          text   = open(path).read()
+          text   = open(path, encoding='utf-8').read()
           text = re.sub(
             r'(pub const RENDEZVOUS_SERVERS[^=]*=\s*&\[)[^\]]*(\];)',
             rf'\1"{server}",\2',
@@ -409,7 +407,7 @@ jobs:
             rf'\1"{key}"\2',
             text
           )
-          open(path, 'w').write(text)
+          open(path, 'w', encoding='utf-8').write(text)
           print("=== Patch zakończony. Weryfikacja ===")
           for i, line in enumerate(text.splitlines(), 1):
             if 'RENDEZVOUS_SERVERS' in line or 'RS_PUB_KEY' in line or server in line:
@@ -420,6 +418,8 @@ jobs:
       - name: Install system deps
         run: |
           sudo apt-get update -y
+          # libunwind-dev wymagany przez libgstreamer1.0-dev na ubuntu-22.04
+          sudo apt-get install -y libunwind-dev
           sudo apt-get install -y \
             g++ gcc git curl wget \
             libgtk-3-dev clang cmake ninja-build \
