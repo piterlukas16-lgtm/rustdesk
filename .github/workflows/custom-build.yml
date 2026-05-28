@@ -6,8 +6,6 @@ on:
   workflow_dispatch:
 
 env:
-  # Rust 1.75 jest wymagany przez RustDesk dla Windows/Linux (ABI sciter)
-  # ale generate-bridge potrzebuje nowszego - używamy stable dla bridge
   RUST_VERSION: "1.75"
   MAC_RUST_VERSION: "1.81"
   CARGO_NDK_VERSION: "3.1.2"
@@ -21,17 +19,9 @@ env:
 
 jobs:
 
-  # ============================================================
-  # BRIDGE — generowany przez oryginalny bridge.yml z repo
-  # build.py generuje bridge automatycznie podczas kompilacji
-  # ============================================================
   generate-bridge:
     uses: ./.github/workflows/bridge.yml
 
-
-  # ============================================================
-  # WINDOWS x64
-  # ============================================================
   build-windows:
     name: Windows x64
     needs: [generate-bridge]
@@ -49,44 +39,32 @@ jobs:
         with:
           submodules: recursive
 
-
-      # ─── PATCH serwera ────────────────────────────────────────
-      - name: Patch custom server config
-        shell: bash
+      - name: Patch server config
+        shell: python
         env:
           MY_SERVER: ${{ secrets.RENDEZVOUS_SERVER }}
           MY_KEY: ${{ secrets.RS_PUB_KEY }}
-          PYTHONIOENCODING: "utf-8"
-          PYTHONUTF8: "1"
         run: |
-          python3 - <<'PYEOF'
-import re, os, sys
-# Wymuś UTF-8 na Windows (cp1252 nie obsługuje polskich znaków w komentarzach)
-if hasattr(sys.stdout, 'reconfigure'):
-    sys.stdout.reconfigure(encoding='utf-8')
-server = os.environ['MY_SERVER']
-key    = os.environ['MY_KEY']
-path   = 'libs/hbb_common/src/config.rs'
-text   = open(path, encoding='utf-8').read()
-text = re.sub(
-    r'(pub const RENDEZVOUS_SERVERS[^=]*=\s*&\[)[^\]]*(\];)',
-    lambda m: m.group(1) + '"' + server + '",' + m.group(2),
-    text, flags=re.DOTALL
-)
-text = re.sub(r'_ => ""', '_ => "' + key + '"', text)
-text = re.sub(
-    r'(pub const RS_PUB_KEY:\s*&str\s*=\s*)"[^"]*"(;)',
-    r'"' + key + r'"',
-    text
-)
-open(path, 'w', encoding='utf-8').write(text)
-found = [(i+1, l) for i,l in enumerate(text.splitlines())
-         if 'RENDEZVOUS_SERVERS' in l or 'RS_PUB_KEY' in l or server in l]
-for i, l in found:
-    sys.stdout.buffer.write(f"{i}: {l}
-".encode('utf-8'))
-          PYEOF
-      # ─────────────────────────────────────────────────────────
+          import re, os, sys
+          server = os.environ['MY_SERVER']
+          key = os.environ['MY_KEY']
+          path = 'libs/hbb_common/src/config.rs'
+          text = open(path, encoding='utf-8').read()
+          text = re.sub(
+              r'(pub const RENDEZVOUS_SERVERS[^=]*=\s*&\[)[^\]]*(\];)',
+              lambda m: m.group(1) + '"' + server + '",' + m.group(2),
+              text, flags=re.DOTALL
+          )
+          text = re.sub(r'_ => ""', '_ => "' + key + '"', text)
+          text = re.sub(
+              r'(pub const RS_PUB_KEY:\s*&str\s*=\s*)"[^"]*"(;)',
+              r'\g<1>"' + key + r'"\2',
+              text
+          )
+          open(path, 'w', encoding='utf-8').write(text)
+          for i, l in enumerate(text.splitlines(), 1):
+              if 'RENDEZVOUS_SERVERS' in l or 'RS_PUB_KEY' in l or server in l:
+                  print(f"{i}: {l}")
 
       - name: Install LLVM
         uses: KyleMayes/install-llvm-action@v1
@@ -106,7 +84,7 @@ for i, l in found:
           Expand-Archive -Path windows-x64-release.zip -DestinationPath windows-x64-release
           mv -Force windows-x64-release/* C:/hostedtoolcache/windows/flutter/stable-${{ env.FLUTTER_VERSION }}-x64/bin/cache/artifacts/engine/windows-x64-release/
 
-      - name: Install Rust ${{ env.RUST_VERSION }}
+      - name: Install Rust
         uses: dtolnay/rust-toolchain@v1
         with:
           toolchain: ${{ env.RUST_VERSION }}
@@ -145,9 +123,6 @@ for i, l in found:
           name: rustdesk-windows-x64
           path: rustdesk-windows/
 
-  # ============================================================
-  # LINUX x64
-  # ============================================================
   build-linux:
     name: Linux x64
     needs: [generate-bridge]
@@ -165,42 +140,36 @@ for i, l in found:
         with:
           submodules: recursive
 
-
-      # ─── PATCH serwera ────────────────────────────────────────
-      - name: Patch custom server config
+      - name: Patch server config
+        shell: python
         env:
           MY_SERVER: ${{ secrets.RENDEZVOUS_SERVER }}
           MY_KEY: ${{ secrets.RS_PUB_KEY }}
         run: |
-          python3 - <<'PYEOF'
-          import re, os
+          import re, os, sys
           server = os.environ['MY_SERVER']
-          key    = os.environ['MY_KEY']
-          path   = 'libs/hbb_common/src/config.rs'
-          text   = open(path, encoding='utf-8').read()
+          key = os.environ['MY_KEY']
+          path = 'libs/hbb_common/src/config.rs'
+          text = open(path, encoding='utf-8').read()
           text = re.sub(
-            r'(pub const RENDEZVOUS_SERVERS[^=]*=\s*&\[)[^\]]*(\];)',
-            rf'\1"{server}",\2',
-            text, flags=re.DOTALL
+              r'(pub const RENDEZVOUS_SERVERS[^=]*=\s*&\[)[^\]]*(\];)',
+              lambda m: m.group(1) + '"' + server + '",' + m.group(2),
+              text, flags=re.DOTALL
           )
-          text = re.sub(r'_ => ""', f'_ => "{key}"', text)
+          text = re.sub(r'_ => ""', '_ => "' + key + '"', text)
           text = re.sub(
-            r'(pub const RS_PUB_KEY:\s*&str\s*=\s*)"[^"]*"(;)',
-            rf'\1"{key}"\2',
-            text
+              r'(pub const RS_PUB_KEY:\s*&str\s*=\s*)"[^"]*"(;)',
+              r'\g<1>"' + key + r'"\2',
+              text
           )
           open(path, 'w', encoding='utf-8').write(text)
-          print("=== Patch zakończony. Weryfikacja ===")
-          for i, line in enumerate(text.splitlines(), 1):
-            if 'RENDEZVOUS_SERVERS' in line or 'RS_PUB_KEY' in line or server in line:
-              print(f"{i}: {line}")
-          PYEOF
-      # ─────────────────────────────────────────────────────────
+          for i, l in enumerate(text.splitlines(), 1):
+              if 'RENDEZVOUS_SERVERS' in l or 'RS_PUB_KEY' in l or server in l:
+                  print(f"{i}: {l}")
 
       - name: Install system deps
         run: |
           sudo apt-get update -y
-          # libunwind-dev wymagany przez libgstreamer1.0-dev na ubuntu-22.04
           sudo apt-get install -y libunwind-dev
           sudo apt-get install -y \
             g++ gcc git curl wget nasm yasm \
@@ -223,7 +192,7 @@ for i, l in found:
           channel: stable
           flutter-version: ${{ env.FLUTTER_VERSION }}
 
-      - name: Install Rust ${{ env.RUST_VERSION }}
+      - name: Install Rust
         uses: dtolnay/rust-toolchain@v1
         with:
           toolchain: ${{ env.RUST_VERSION }}
@@ -249,7 +218,7 @@ for i, l in found:
       - name: Build RustDesk
         run: python3 build.py --hwcodec --flutter --skip-portable-pack
 
-      - name: Build .deb package
+      - name: Build deb package
         run: python3 build.py --hwcodec --flutter --package
 
       - name: Upload artifact
@@ -260,9 +229,6 @@ for i, l in found:
             ./rustdesk-*.deb
             ./rustdesk-*.tar.gz
 
-  # ============================================================
-  # macOS — Intel x64 + Apple Silicon arm64
-  # ============================================================
   build-macos:
     name: macOS (${{ matrix.job.arch }})
     needs: [generate-bridge]
@@ -271,8 +237,8 @@ for i, l in found:
       fail-fast: false
       matrix:
         job:
-          - { arch: x86_64, target: x86_64-apple-darwin,  vcpkg-triplet: x64-osx   }
-          - { arch: arm64,  target: aarch64-apple-darwin,  vcpkg-triplet: arm64-osx  }
+          - { arch: x86_64, target: x86_64-apple-darwin, vcpkg-triplet: x64-osx }
+          - { arch: arm64, target: aarch64-apple-darwin, vcpkg-triplet: arm64-osx }
     steps:
       - name: Export cache env
         uses: actions/github-script@v6
@@ -286,39 +252,34 @@ for i, l in found:
         with:
           submodules: recursive
 
-
-      # ─── PATCH serwera (macOS: python3 bo sed -i '' jest kapryśny) ──
-      - name: Patch custom server config
+      - name: Patch server config
+        shell: python
         env:
           MY_SERVER: ${{ secrets.RENDEZVOUS_SERVER }}
           MY_KEY: ${{ secrets.RS_PUB_KEY }}
         run: |
-          python3 - <<'PYEOF'
-          import re, os
+          import re, os, sys
           server = os.environ['MY_SERVER']
-          key    = os.environ['MY_KEY']
-          path   = 'libs/hbb_common/src/config.rs'
-          text   = open(path, encoding='utf-8').read()
+          key = os.environ['MY_KEY']
+          path = 'libs/hbb_common/src/config.rs'
+          text = open(path, encoding='utf-8').read()
           text = re.sub(
-            r'(pub const RENDEZVOUS_SERVERS[^=]*=\s*&\[)[^\]]*(\];)',
-            rf'\1"{server}",\2',
-            text, flags=re.DOTALL
+              r'(pub const RENDEZVOUS_SERVERS[^=]*=\s*&\[)[^\]]*(\];)',
+              lambda m: m.group(1) + '"' + server + '",' + m.group(2),
+              text, flags=re.DOTALL
           )
-          text = re.sub(r'_ => ""', f'_ => "{key}"', text)
+          text = re.sub(r'_ => ""', '_ => "' + key + '"', text)
           text = re.sub(
-            r'(pub const RS_PUB_KEY:\s*&str\s*=\s*)"[^"]*"(;)',
-            rf'\1"{key}"\2',
-            text
+              r'(pub const RS_PUB_KEY:\s*&str\s*=\s*)"[^"]*"(;)',
+              r'\g<1>"' + key + r'"\2',
+              text
           )
           open(path, 'w', encoding='utf-8').write(text)
-          print("=== Patch zakończony. Weryfikacja ===")
-          for i, line in enumerate(text.splitlines(), 1):
-            if 'RENDEZVOUS_SERVERS' in line or 'RS_PUB_KEY' in line or server in line:
-              print(f"{i}: {line}")
-          PYEOF
-      # ─────────────────────────────────────────────────────────
+          for i, l in enumerate(text.splitlines(), 1):
+              if 'RENDEZVOUS_SERVERS' in l or 'RS_PUB_KEY' in l or server in l:
+                  print(f"{i}: {l}")
 
-      - name: Install deps (Homebrew)
+      - name: Install deps
         run: brew install nasm yasm cmake ninja pkg-config
 
       - name: Install Flutter
@@ -327,7 +288,7 @@ for i, l in found:
           channel: stable
           flutter-version: ${{ env.FLUTTER_VERSION }}
 
-      - name: Install Rust ${{ env.MAC_RUST_VERSION }}
+      - name: Install Rust
         uses: dtolnay/rust-toolchain@v1
         with:
           toolchain: ${{ env.MAC_RUST_VERSION }}
@@ -363,9 +324,6 @@ for i, l in found:
           name: rustdesk-macos-${{ matrix.job.arch }}
           path: ./flutter/build/macos/Build/Products/Release/RustDesk.app
 
-  # ============================================================
-  # ANDROID arm64
-  # ============================================================
   build-android:
     name: Android arm64
     needs: [generate-bridge]
@@ -383,42 +341,36 @@ for i, l in found:
         with:
           submodules: recursive
 
-
-      # ─── PATCH serwera ────────────────────────────────────────
-      - name: Patch custom server config
+      - name: Patch server config
+        shell: python
         env:
           MY_SERVER: ${{ secrets.RENDEZVOUS_SERVER }}
           MY_KEY: ${{ secrets.RS_PUB_KEY }}
         run: |
-          python3 - <<'PYEOF'
-          import re, os
+          import re, os, sys
           server = os.environ['MY_SERVER']
-          key    = os.environ['MY_KEY']
-          path   = 'libs/hbb_common/src/config.rs'
-          text   = open(path, encoding='utf-8').read()
+          key = os.environ['MY_KEY']
+          path = 'libs/hbb_common/src/config.rs'
+          text = open(path, encoding='utf-8').read()
           text = re.sub(
-            r'(pub const RENDEZVOUS_SERVERS[^=]*=\s*&\[)[^\]]*(\];)',
-            rf'\1"{server}",\2',
-            text, flags=re.DOTALL
+              r'(pub const RENDEZVOUS_SERVERS[^=]*=\s*&\[)[^\]]*(\];)',
+              lambda m: m.group(1) + '"' + server + '",' + m.group(2),
+              text, flags=re.DOTALL
           )
-          text = re.sub(r'_ => ""', f'_ => "{key}"', text)
+          text = re.sub(r'_ => ""', '_ => "' + key + '"', text)
           text = re.sub(
-            r'(pub const RS_PUB_KEY:\s*&str\s*=\s*)"[^"]*"(;)',
-            rf'\1"{key}"\2',
-            text
+              r'(pub const RS_PUB_KEY:\s*&str\s*=\s*)"[^"]*"(;)',
+              r'\g<1>"' + key + r'"\2',
+              text
           )
           open(path, 'w', encoding='utf-8').write(text)
-          print("=== Patch zakończony. Weryfikacja ===")
-          for i, line in enumerate(text.splitlines(), 1):
-            if 'RENDEZVOUS_SERVERS' in line or 'RS_PUB_KEY' in line or server in line:
-              print(f"{i}: {line}")
-          PYEOF
-      # ─────────────────────────────────────────────────────────
+          for i, l in enumerate(text.splitlines(), 1):
+              if 'RENDEZVOUS_SERVERS' in l or 'RS_PUB_KEY' in l or server in l:
+                  print(f"{i}: {l}")
 
       - name: Install system deps
         run: |
           sudo apt-get update -y
-          # libunwind-dev wymagany przez libgstreamer1.0-dev na ubuntu-22.04
           sudo apt-get install -y libunwind-dev
           sudo apt-get install -y \
             g++ gcc git curl wget \
@@ -444,7 +396,7 @@ for i, l in found:
           ndk-version: ${{ env.NDK_VERSION }}
           local-cache: true
 
-      - name: Install Rust ${{ env.RUST_VERSION }} + Android targets
+      - name: Install Rust
         uses: dtolnay/rust-toolchain@v1
         with:
           toolchain: ${{ env.RUST_VERSION }}
@@ -464,7 +416,7 @@ for i, l in found:
           vcpkgGitCommitId: ${{ env.VCPKG_COMMIT_ID }}
           doNotCache: false
 
-      - name: Install vcpkg deps (android arm64)
+      - name: Install vcpkg deps
         run: |
           $VCPKG_ROOT/vcpkg install \
             --triplet arm64-android \
