@@ -22,35 +22,11 @@ env:
 jobs:
 
   # ============================================================
-  # BRIDGE — pliki bridge są już w repo (RustDesk 1.4.x)
-  # Wystarczy je pobrać z checkout i przekazać jako artefakt
-  # Nie trzeba uruchamiać flutter_rust_bridge_codegen!
+  # BRIDGE — generowany przez oryginalny bridge.yml z repo
+  # build.py generuje bridge automatycznie podczas kompilacji
   # ============================================================
   generate-bridge:
-    runs-on: ubuntu-22.04
-    steps:
-      - name: Checkout source code
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - name: Verify bridge files exist in repo
-        run: |
-          echo "=== Sprawdzanie plików bridge ==="
-          ls -la src/bridge_generated.rs || echo "BRAK: src/bridge_generated.rs"
-          ls -la flutter/lib/generated_bridge.dart || echo "BRAK: flutter/lib/generated_bridge.dart"
-          # Jeśli pliki istnieją — wszystko OK, przekazujemy je dalej
-          # Jeśli nie — build.py sam je wygeneruje podczas kompilacji
-
-      - name: Upload bridge artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: bridge-artifact
-          path: |
-            ./src/bridge_generated.rs
-            ./flutter/lib/generated_bridge.dart
-          # Jeśli pliki nie istnieją w repo, ten krok jest opcjonalny
-          if-no-files-found: warn
+    uses: ./.github/workflows/bridge.yml
 
 
   # ============================================================
@@ -73,11 +49,6 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Restore bridge
-        uses: actions/download-artifact@v4
-        with:
-          name: bridge-artifact
-          path: ./
 
       # ─── PATCH serwera ────────────────────────────────────────
       - name: Patch custom server config
@@ -198,11 +169,6 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Restore bridge
-        uses: actions/download-artifact@v4
-        with:
-          name: bridge-artifact
-          path: ./
 
       # ─── PATCH serwera ────────────────────────────────────────
       - name: Patch custom server config
@@ -322,11 +288,6 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Restore bridge
-        uses: actions/download-artifact@v4
-        with:
-          name: bridge-artifact
-          path: ./
 
       # ─── PATCH serwera (macOS: python3 bo sed -i '' jest kapryśny) ──
       - name: Patch custom server config
@@ -424,11 +385,6 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Restore bridge
-        uses: actions/download-artifact@v4
-        with:
-          name: bridge-artifact
-          path: ./
 
       # ─── PATCH serwera ────────────────────────────────────────
       - name: Patch custom server config
