@@ -170,9 +170,9 @@ jobs:
       - name: Install system deps
         run: |
           sudo apt-get update -y
-          sudo apt-get install -y libunwind-dev
+          sudo apt-get install -y libunwind-dev nasm yasm
           sudo apt-get install -y \
-            g++ gcc git curl wget nasm yasm \
+            g++ gcc git curl wget \
             libgtk-3-dev clang \
             libxcb-randr0-dev libxdo-dev libxfixes-dev \
             libxcb-shape0-dev libxcb-xfixes0-dev \
@@ -371,7 +371,7 @@ jobs:
       - name: Install system deps
         run: |
           sudo apt-get update -y
-          sudo apt-get install -y libunwind-dev
+          sudo apt-get install -y libunwind-dev nasm yasm
           sudo apt-get install -y \
             g++ gcc git curl wget \
             libgtk-3-dev clang cmake ninja-build \
