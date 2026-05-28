@@ -404,7 +404,7 @@ jobs:
           components: rustfmt
 
       - name: Install cargo-ndk
-        run: cargo install cargo-ndk --version ${{ env.CARGO_NDK_VERSION }}
+        run: cargo install cargo-ndk --version ${{ env.CARGO_NDK_VERSION }} --locked
 
       - uses: Swatinem/rust-cache@v2
         with:
