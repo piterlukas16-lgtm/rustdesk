@@ -49,8 +49,10 @@ jobs:
 
       # flutter_rust_bridge_codegen 1.82.6 = ostatnia wersja v1.x
       # kompatybilna z kodem RustDesk i Rust stable/edition2021
-      - name: Install flutter_rust_bridge_codegen
-        run: cargo install flutter_rust_bridge_codegen --version 1.82.6 --features uuid
+      - name: Install flutter_rust_bridge_codegen + cargo-expand
+        run: |
+          cargo install flutter_rust_bridge_codegen --version 1.82.6 --features uuid
+          cargo install cargo-expand
 
       - name: Generate bridge
         run: |
