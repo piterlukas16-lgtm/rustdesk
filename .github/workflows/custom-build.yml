@@ -209,14 +209,16 @@ jobs:
         run: |
           sudo apt-get install -y \
             gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
-            binutils-aarch64-linux-gnu \
-            libgcc-s1:arm64 libc6:arm64 libstdc++6:arm64 || true
-          # Ustaw cross-kompilator dla vcpkg i cmake
-          echo "VCPKG_FORCE_SYSTEM_BINARIES=1" >> $GITHUB_ENV
+            binutils-aarch64-linux-gnu
+          # Linker dla Rust cross-kompilacji
+          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+
+      - name: Set cross-compile env (arm64 only)
+        if: matrix.job.arch == 'arm64'
+        run: |
           echo "CC=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
           echo "CXX=aarch64-linux-gnu-g++" >> $GITHUB_ENV
           echo "AR=aarch64-linux-gnu-ar" >> $GITHUB_ENV
-          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
 
       - name: Install LLVM (x86_64)
         if: matrix.job.arch == 'x86_64'
@@ -263,6 +265,8 @@ jobs:
           doNotCache: false
 
       - name: Install vcpkg deps
+        env:
+          VCPKG_FORCE_SYSTEM_BINARIES: ${{ matrix.job.arch == 'arm64' && '1' || '' }}
         run: |
           $VCPKG_ROOT/vcpkg install \
             --triplet ${{ matrix.job.triplet }} \
