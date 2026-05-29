@@ -129,9 +129,15 @@ jobs:
             ./flutter/build/windows/x64/runner/Release/rustdesk.exe
 
   build-linux:
-    name: Linux x64
+    name: Linux (${{ matrix.job.arch }})
     needs: [generate-bridge]
-    runs-on: ubuntu-22.04
+    runs-on: ${{ matrix.job.runs-on }}
+    strategy:
+      fail-fast: false
+      matrix:
+        job:
+          - { arch: x86_64, target: x86_64-unknown-linux-gnu,   triplet: x64-linux,   runs-on: ubuntu-22.04          }
+          - { arch: arm64,  target: aarch64-unknown-linux-gnu,   triplet: arm64-linux,  runs-on: ubuntu-22.04-arm      }
     steps:
       - name: Export cache env
         uses: actions/github-script@v6
@@ -207,12 +213,12 @@ jobs:
         uses: dtolnay/rust-toolchain@v1
         with:
           toolchain: ${{ env.RUST_VERSION }}
-          targets: x86_64-unknown-linux-gnu
+          targets: ${{ matrix.job.target }}
           components: rustfmt
 
       - uses: Swatinem/rust-cache@v2
         with:
-          prefix-key: ubuntu-22.04
+          prefix-key: linux-${{ matrix.job.arch }}
 
       - name: Setup vcpkg
         uses: lukka/run-vcpkg@v11
@@ -223,20 +229,25 @@ jobs:
       - name: Install vcpkg deps
         run: |
           $VCPKG_ROOT/vcpkg install \
-            --triplet x64-linux \
+            --triplet ${{ matrix.job.triplet }} \
             --x-install-root="$VCPKG_ROOT/installed"
 
       - name: Build RustDesk
         run: python3 build.py --hwcodec --flutter
 
-      - name: Build package
-        run: python3 build.py --hwcodec --flutter --package
+      - name: Build deb package
+        run: python3 build.py --hwcodec --flutter --package deb
+
+      - name: Build rpm package
+        run: python3 build.py --hwcodec --flutter --package rpm
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: rustdesk-linux-x64
-          path: ./rustdesk-*.deb
+          name: rustdesk-linux-${{ matrix.job.arch }}
+          path: |
+            ./rustdesk-*.deb
+            ./rustdesk-*.rpm
 
   build-macos:
     name: macOS (${{ matrix.job.arch }})
