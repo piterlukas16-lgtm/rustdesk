@@ -118,16 +118,15 @@ jobs:
             --x-install-root="$VCPKG_ROOT/installed"
 
       - name: Build RustDesk
-        run: python3 .\build.py --portable --hwcodec --flutter --vram --skip-portable-pack
-
-      - name: Collect output
-        run: mv ./flutter/build/windows/x64/runner/Release ./rustdesk-windows
+        run: python3 .\build.py --portable --hwcodec --flutter --vram
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: rustdesk-windows-x64
-          path: rustdesk-windows/
+          path: |
+            ./rustdesk-*.exe
+            ./flutter/build/windows/x64/runner/Release/rustdesk.exe
 
   build-linux:
     name: Linux x64
@@ -230,13 +229,14 @@ jobs:
       - name: Build RustDesk
         run: python3 build.py --hwcodec --flutter
 
+      - name: Build package
+        run: python3 build.py --hwcodec --flutter --package
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: rustdesk-linux-x64
-          path: |
-            ./rustdesk-*.deb
-            ./rustdesk-*.tar.gz
+          path: ./rustdesk-*.deb
 
   build-macos:
     name: macOS (${{ matrix.job.arch }})
@@ -333,11 +333,16 @@ jobs:
           flutter config --enable-macos-desktop
           python3 build.py --flutter --hwcodec
 
+      - name: Package macOS app
+        run: |
+          cd flutter/build/macos/Build/Products/Release
+          zip -r RustDesk-${{ matrix.job.arch }}.zip RustDesk.app
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: rustdesk-macos-${{ matrix.job.arch }}
-          path: ./flutter/build/macos/Build/Products/Release/RustDesk.app
+          path: ./flutter/build/macos/Build/Products/Release/RustDesk-${{ matrix.job.arch }}.zip
 
   build-android:
     name: Android arm64
@@ -445,21 +450,19 @@ jobs:
 
       - name: Patch Kotlin version
         run: |
-          # Zamien wersje Kotlin na 1.9.25 w settings.gradle
-          # Wzorzec: version "COKOLWIEK" -> version "1.9.25"
           SETTINGS="flutter/android/settings.gradle"
           BUILD="flutter/android/build.gradle"
-          if [ -f "$SETTINGS" ]; then
-            # Zamien cala wersje po "org.jetbrains.kotlin.android" version
-            sed -i 's/id "org.jetbrains.kotlin.android" version "[^"]*"/id "org.jetbrains.kotlin.android" version "1.9.25"/g' "$SETTINGS"
-            echo "settings.gradle po patchu:"
-            grep -n "kotlin" "$SETTINGS" || true
-          fi
-          if [ -f "$BUILD" ]; then
-            sed -i "s/ext.kotlin_version = '[^']*'/ext.kotlin_version = '1.9.25'/g" "$BUILD"
-            echo "build.gradle po patchu:"
-            grep -n "kotlin" "$BUILD" || true
-          fi
+          echo "=== settings.gradle PRZED ==="
+          cat "$SETTINGS" || echo "brak pliku"
+          echo "=== build.gradle PRZED ==="
+          cat "$BUILD" || echo "brak pliku"
+          # Zamien wersje Kotlin
+          sed -i 's/id "org.jetbrains.kotlin.android" version "[^"]*"/id "org.jetbrains.kotlin.android" version "1.9.25"/g' "$SETTINGS"
+          sed -i "s/ext.kotlin_version = '[^']*'/ext.kotlin_version = '1.9.25'/g" "$BUILD"
+          echo "=== settings.gradle PO ==="
+          grep -n "kotlin" "$SETTINGS" || true
+          echo "=== build.gradle PO ==="
+          grep -n "kotlin" "$BUILD" || true
 
       - name: Build APK
         run: |
