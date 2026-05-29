@@ -12,7 +12,7 @@ env:
   LLVM_VERSION: "15.0.6"
   FLUTTER_VERSION: "3.24.5"
   ANDROID_FLUTTER_VERSION: "3.24.5"
-  VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+  VCPKG_BINARY_SOURCES: "clear"
   VCPKG_COMMIT_ID: "120deac3062162151622ca4860575a33844ba10b"
   NDK_VERSION: "r27c"
   VERSION: "1.4.6"
@@ -217,9 +217,9 @@ jobs:
       - name: Set cross-compile env (arm64 only)
         if: matrix.job.arch == 'arm64'
         run: |
-          echo "CC=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
-          echo "CXX=aarch64-linux-gnu-g++" >> $GITHUB_ENV
-          echo "AR=aarch64-linux-gnu-ar" >> $GITHUB_ENV
+          # Nie ustawiamy CC/CXX globalnie - psuje x64 build vcpkg
+          # Rust linker ustawiony przez CARGO_TARGET_... jest wystarczający
+          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
 
       - name: Install LLVM (x86_64)
         if: matrix.job.arch == 'x86_64'
@@ -268,16 +268,13 @@ jobs:
       - name: Install vcpkg deps
         env:
           VCPKG_FORCE_SYSTEM_BINARIES: ${{ matrix.job.arch == 'arm64' && '1' || '' }}
+          # CC/CXX tylko dla vcpkg ARM64 - nie globalne zeby nie psuc x64
+          CC: ${{ matrix.job.arch == 'arm64' && 'aarch64-linux-gnu-gcc' || 'gcc' }}
+          CXX: ${{ matrix.job.arch == 'arm64' && 'aarch64-linux-gnu-g++' || 'g++' }}
         run: |
           $VCPKG_ROOT/vcpkg install \
             --triplet ${{ matrix.job.triplet }} \
-            --x-install-root="$VCPKG_ROOT/installed" || {
-              echo "=== aom config log ==="
-              cat $VCPKG_ROOT/buildtrees/aom/config-${{ matrix.job.triplet }}-rel-out.log 2>/dev/null || true
-              cat $VCPKG_ROOT/buildtrees/aom/config-${{ matrix.job.triplet }}-rel-err.log 2>/dev/null || true
-              cat $VCPKG_ROOT/buildtrees/detect_compiler/config-${{ matrix.job.triplet }}-rel-out.log 2>/dev/null || true
-              exit 1
-            }
+            --x-install-root="$VCPKG_ROOT/installed" 
 
       - name: Build RustDesk
         run: python3 build.py --hwcodec --flutter
