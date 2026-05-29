@@ -118,7 +118,7 @@ jobs:
             --x-install-root="$VCPKG_ROOT/installed"
 
       - name: Build RustDesk
-        run: python3 .\build.py --portable --hwcodec --flutter --vram
+        run: python3 .\build.py --portable --hwcodec --flutter
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -198,10 +198,18 @@ jobs:
             libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
             libpam0g-dev zip unzip python3-pip
 
-      - name: Install LLVM
+      - name: Install LLVM (x86_64)
+        if: matrix.job.arch == 'x86_64'
         uses: KyleMayes/install-llvm-action@v1
         with:
           version: ${{ env.LLVM_VERSION }}
+
+      - name: Install LLVM (arm64 via apt)
+        if: matrix.job.arch == 'arm64'
+        run: |
+          sudo apt-get install -y clang-15 llvm-15 libclang-15-dev
+          echo "LIBCLANG_PATH=/usr/lib/llvm-15/lib" >> $GITHUB_ENV
+          echo "LLVM_CONFIG_PATH=/usr/bin/llvm-config-15" >> $GITHUB_ENV
 
       - name: Install Flutter (x86_64)
         if: matrix.job.arch == 'x86_64'
@@ -244,10 +252,10 @@ jobs:
         run: python3 build.py --hwcodec --flutter
 
       - name: Build deb package
-        run: python3 build.py --hwcodec --flutter --package deb
+        run: python3 build.py --hwcodec --flutter --skip-cargo --package deb
 
       - name: Build rpm package
-        run: python3 build.py --hwcodec --flutter --package rpm
+        run: python3 build.py --hwcodec --flutter --skip-cargo --package rpm
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -260,13 +268,13 @@ jobs:
   build-macos:
     name: macOS (${{ matrix.job.arch }})
     needs: [generate-bridge]
-    runs-on: macos-latest
+    runs-on: ${{ matrix.job.runs-on }}
     strategy:
       fail-fast: false
       matrix:
         job:
-          - { arch: x86_64, target: x86_64-apple-darwin, vcpkg-triplet: x64-osx }
-          - { arch: arm64, target: aarch64-apple-darwin, vcpkg-triplet: arm64-osx }
+          - { arch: x86_64, target: x86_64-apple-darwin,  vcpkg-triplet: x64-osx,   runs-on: macos-13        }
+          - { arch: arm64,  target: aarch64-apple-darwin,  vcpkg-triplet: arm64-osx,  runs-on: macos-14-xlarge }
     steps:
       - name: Export cache env
         uses: actions/github-script@v6
@@ -419,9 +427,11 @@ jobs:
           sudo apt-get install -y libunwind-dev nasm yasm
           sudo apt-get install -y \
             g++ gcc git curl wget \
-            libgtk-3-dev clang cmake ninja-build \
+            libgtk-3-dev clang-15 libclang-15-dev cmake ninja-build \
             libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
             python3-pip zip
+          echo "LIBCLANG_PATH=/usr/lib/llvm-15/lib" >> $GITHUB_ENV
+          echo "LLVM_CONFIG_PATH=/usr/bin/llvm-config-15" >> $GITHUB_ENV
 
       - name: Install Flutter
         uses: subosito/flutter-action@v2.12.0
