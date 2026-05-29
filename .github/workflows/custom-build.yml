@@ -136,8 +136,8 @@ jobs:
       fail-fast: false
       matrix:
         job:
-          - { arch: x86_64, target: x86_64-unknown-linux-gnu,   triplet: x64-linux,   runs-on: ubuntu-22.04          }
-          - { arch: arm64,  target: aarch64-unknown-linux-gnu,   triplet: arm64-linux,  runs-on: ubuntu-22.04          }
+          - { arch: x86_64, target: x86_64-unknown-linux-gnu,  triplet: x64-linux,   host-triplet: x64-linux,   runs-on: ubuntu-22.04 }
+          - { arch: arm64,  target: aarch64-unknown-linux-gnu,  triplet: arm64-linux,  host-triplet: arm64-linux,  runs-on: ubuntu-22.04 }
     steps:
       - name: Export cache env
         uses: actions/github-script@v6
@@ -268,12 +268,12 @@ jobs:
       - name: Install vcpkg deps
         env:
           VCPKG_FORCE_SYSTEM_BINARIES: ${{ matrix.job.arch == 'arm64' && '1' || '' }}
-          # CC/CXX tylko dla vcpkg ARM64 - nie globalne zeby nie psuc x64
           CC: ${{ matrix.job.arch == 'arm64' && 'aarch64-linux-gnu-gcc' || 'gcc' }}
           CXX: ${{ matrix.job.arch == 'arm64' && 'aarch64-linux-gnu-g++' || 'g++' }}
         run: |
           $VCPKG_ROOT/vcpkg install \
             --triplet ${{ matrix.job.triplet }} \
+            --host-triplet ${{ matrix.job.host-triplet }} \
             --x-install-root="$VCPKG_ROOT/installed" 
 
       - name: Build RustDesk
