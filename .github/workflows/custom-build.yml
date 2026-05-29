@@ -129,15 +129,9 @@ jobs:
             ./flutter/build/windows/x64/runner/Release/rustdesk.exe
 
   build-linux:
-    name: Linux (${{ matrix.job.arch }})
+    name: Linux x86_64
     needs: [generate-bridge]
-    runs-on: ${{ matrix.job.runs-on }}
-    strategy:
-      fail-fast: false
-      matrix:
-        job:
-          - { arch: x86_64, target: x86_64-unknown-linux-gnu,  triplet: x64-linux,   host-triplet: x64-linux,   runs-on: ubuntu-22.04 }
-          - { arch: arm64,  target: aarch64-unknown-linux-gnu,  triplet: arm64-linux,  host-triplet: arm64-linux,  runs-on: ubuntu-22.04 }
+    runs-on: ubuntu-22.04
     steps:
       - name: Export cache env
         uses: actions/github-script@v6
@@ -145,12 +139,6 @@ jobs:
           script: |
             core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
-
-      - name: Set up QEMU (for arm64 cross-build)
-        if: matrix.job.arch == 'arm64'
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: arm64
 
       - name: Checkout
         uses: actions/checkout@v4
@@ -205,59 +193,27 @@ jobs:
             libpam0g-dev zip unzip python3-pip \
             perl pkg-config
 
-      - name: Install ARM64 cross-compiler
-        if: matrix.job.arch == 'arm64'
-        run: |
-          sudo apt-get install -y \
-            gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
-            binutils-aarch64-linux-gnu
-          # Linker dla Rust cross-kompilacji
-          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
-
-      - name: Set cross-compile env (arm64 only)
-        if: matrix.job.arch == 'arm64'
-        run: |
-          # Nie ustawiamy CC/CXX globalnie - psuje x64 build vcpkg
-          # Rust linker ustawiony przez CARGO_TARGET_... jest wystarczający
-          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
-
-      - name: Install LLVM (x86_64)
-        if: matrix.job.arch == 'x86_64'
+      - name: Install LLVM
         uses: KyleMayes/install-llvm-action@v1
         with:
           version: ${{ env.LLVM_VERSION }}
 
-      - name: Install LLVM (arm64 via apt)
-        if: matrix.job.arch == 'arm64'
-        run: |
-          sudo apt-get install -y clang-15 llvm-15 libclang-15-dev
-          echo "LIBCLANG_PATH=/usr/lib/llvm-15/lib" >> $GITHUB_ENV
-          echo "LLVM_CONFIG_PATH=/usr/bin/llvm-config-15" >> $GITHUB_ENV
-
-      - name: Install Flutter (x86_64)
-        if: matrix.job.arch == 'x86_64'
+      - name: Install Flutter
         uses: subosito/flutter-action@v2.12.0
         with:
           channel: stable
           flutter-version: ${{ env.FLUTTER_VERSION }}
 
-      - name: Install Flutter (arm64 manual)
-        if: matrix.job.arch == 'arm64'
-        run: |
-          git clone https://github.com/flutter/flutter.git --depth 1 -b ${{ env.FLUTTER_VERSION }} /opt/flutter
-          echo "/opt/flutter/bin" >> $GITHUB_PATH
-          /opt/flutter/bin/flutter precache --linux
-
       - name: Install Rust
         uses: dtolnay/rust-toolchain@v1
         with:
           toolchain: ${{ env.RUST_VERSION }}
-          targets: ${{ matrix.job.target }}
+          targets: x86_64-unknown-linux-gnu
           components: rustfmt
 
       - uses: Swatinem/rust-cache@v2
         with:
-          prefix-key: linux-${{ matrix.job.arch }}
+          prefix-key: linux-x86_64
 
       - name: Setup vcpkg
         uses: lukka/run-vcpkg@v11
@@ -266,29 +222,24 @@ jobs:
           doNotCache: false
 
       - name: Install vcpkg deps
-        env:
-          VCPKG_FORCE_SYSTEM_BINARIES: ${{ matrix.job.arch == 'arm64' && '1' || '' }}
-          CC: ${{ matrix.job.arch == 'arm64' && 'aarch64-linux-gnu-gcc' || 'gcc' }}
-          CXX: ${{ matrix.job.arch == 'arm64' && 'aarch64-linux-gnu-g++' || 'g++' }}
         run: |
           $VCPKG_ROOT/vcpkg install \
-            --triplet ${{ matrix.job.triplet }} \
-            --host-triplet ${{ matrix.job.host-triplet }} \
-            --x-install-root="$VCPKG_ROOT/installed" 
+            --triplet x64-linux \
+            --x-install-root="$VCPKG_ROOT/installed"
 
       - name: Build RustDesk
         run: python3 build.py --hwcodec --flutter
 
       - name: Build deb package
-        run: python3 build.py --hwcodec --flutter --skip-cargo --package deb
+        run: python3 build.py --hwcodec --flutter --package deb
 
       - name: Build rpm package
-        run: python3 build.py --hwcodec --flutter --skip-cargo --package rpm
+        run: python3 build.py --hwcodec --flutter --package rpm
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: rustdesk-linux-${{ matrix.job.arch }}
+          name: rustdesk-linux-x86_64
           path: |
             ./rustdesk-*.deb
             ./rustdesk-*.rpm
@@ -301,7 +252,7 @@ jobs:
       fail-fast: false
       matrix:
         job:
-          - { arch: x86_64, target: x86_64-apple-darwin,  vcpkg-triplet: x64-osx,   runs-on: macos-13        }
+          - { arch: x86_64, target: x86_64-apple-darwin,  vcpkg-triplet: x64-osx,   runs-on: macos-12        }
           - { arch: arm64,  target: aarch64-apple-darwin,  vcpkg-triplet: arm64-osx,  runs-on: macos-14 }
     steps:
       - name: Export cache env
@@ -411,12 +362,6 @@ jobs:
             core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
 
-      - name: Set up QEMU (for arm64 cross-build)
-        if: matrix.job.arch == 'arm64'
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: arm64
-
       - name: Checkout
         uses: actions/checkout@v4
         with:
@@ -511,22 +456,23 @@ jobs:
             --triplet arm64-android \
             --x-install-root="$VCPKG_ROOT/installed"
 
-      - name: Patch Kotlin version
+      - name: Patch Android config
         run: |
           SETTINGS="flutter/android/settings.gradle"
-          # Kotlin 2.0.20 = kompatybilny z Flutter 3.24.x i AGP 7.3.1
-          sed -i 's/id "org.jetbrains.kotlin.android" version "[^"]*"/id "org.jetbrains.kotlin.android" version "2.0.20"/g' "$SETTINGS"
-          echo "=== settings.gradle PO ==="
-          grep -n "kotlin" "$SETTINGS" || true
+          # Kotlin musi byc zgodny z zaleznosciami (1.9.10 w stdlib)
+          # AGP 7.3.1 wymaga Kotlin < 1.8, wiec zostawiamy oryginalna wersje
+          # i zamiast tego budujemy debug APK ktore nie wymaga keystore
+          echo "=== settings.gradle ==="
+          cat "$SETTINGS"
 
-      - name: Build APK
+      - name: Build APK (debug - nie wymaga keystore)
         run: |
           cd flutter
           flutter pub get
-          flutter build apk --release --target-platform android-arm64
+          flutter build apk --debug --target-platform android-arm64
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: rustdesk-android-arm64
-          path: ./flutter/build/app/outputs/flutter-apk/app-release.apk
+          path: ./flutter/build/app/outputs/flutter-apk/app-debug.apk
