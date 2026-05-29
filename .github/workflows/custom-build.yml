@@ -203,11 +203,19 @@ jobs:
         with:
           version: ${{ env.LLVM_VERSION }}
 
-      - name: Install Flutter
+      - name: Install Flutter (x86_64)
+        if: matrix.job.arch == 'x86_64'
         uses: subosito/flutter-action@v2.12.0
         with:
           channel: stable
           flutter-version: ${{ env.FLUTTER_VERSION }}
+
+      - name: Install Flutter (arm64 manual)
+        if: matrix.job.arch == 'arm64'
+        run: |
+          git clone https://github.com/flutter/flutter.git --depth 1 -b ${{ env.FLUTTER_VERSION }} /opt/flutter
+          echo "/opt/flutter/bin" >> $GITHUB_PATH
+          /opt/flutter/bin/flutter precache --linux
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@v1
