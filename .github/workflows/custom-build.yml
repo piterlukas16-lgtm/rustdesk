@@ -451,18 +451,10 @@ jobs:
       - name: Patch Kotlin version
         run: |
           SETTINGS="flutter/android/settings.gradle"
-          BUILD="flutter/android/build.gradle"
-          echo "=== settings.gradle PRZED ==="
-          cat "$SETTINGS" || echo "brak pliku"
-          echo "=== build.gradle PRZED ==="
-          cat "$BUILD" || echo "brak pliku"
-          # Zamien wersje Kotlin
-          sed -i 's/id "org.jetbrains.kotlin.android" version "[^"]*"/id "org.jetbrains.kotlin.android" version "1.9.25"/g' "$SETTINGS"
-          sed -i "s/ext.kotlin_version = '[^']*'/ext.kotlin_version = '1.9.25'/g" "$BUILD"
+          # Kotlin 2.0.20 = kompatybilny z Flutter 3.24.x i AGP 7.3.1
+          sed -i 's/id "org.jetbrains.kotlin.android" version "[^"]*"/id "org.jetbrains.kotlin.android" version "2.0.20"/g' "$SETTINGS"
           echo "=== settings.gradle PO ==="
           grep -n "kotlin" "$SETTINGS" || true
-          echo "=== build.gradle PO ==="
-          grep -n "kotlin" "$BUILD" || true
 
       - name: Build APK
         run: |
