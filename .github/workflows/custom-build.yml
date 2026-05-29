@@ -230,10 +230,22 @@ jobs:
       - name: Build RustDesk
         run: python3 build.py --hwcodec --flutter
 
+      - name: Debug - sprawdz co zostalo zbudowane
+        run: |
+          echo "=== Katalog glowny ==="
+          ls -la *.deb *.rpm *.exe 2>/dev/null || echo "brak pakietow"
+          echo "=== flutter/build ==="
+          find flutter/build -name "rustdesk*" -o -name "*.AppImage" 2>/dev/null | head -20
+          echo "=== target/release ==="
+          ls -la target/release/rustdesk* 2>/dev/null || echo "brak w target/release"
+          echo "=== deb/ katalog ==="
+          ls -la deb/ 2>/dev/null || echo "brak katalogu deb/"
+
       - name: Build deb package
         run: python3 build.py --hwcodec --flutter --package deb
 
       - name: Build rpm package
+        if: success()
         run: python3 build.py --hwcodec --flutter --package rpm
 
       - name: Upload artifact
@@ -399,6 +411,22 @@ jobs:
           for i, l in enumerate(text.splitlines(), 1):
               if 'RENDEZVOUS_SERVERS' in l or 'RS_PUB_KEY' in l or server in l:
                   print(f"{i}: {l}")
+
+      - name: Free disk space
+        run: |
+          echo "=== Miejsce przed czyszczeniem ==="
+          df -h
+          sudo rm -rf /usr/local/lib/android/sdk/ndk
+          sudo rm -rf /usr/local/lib/android/sdk/build-tools
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo rm -rf /opt/hostedtoolcache/Ruby
+          sudo rm -rf /opt/hostedtoolcache/go
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/share/swift
+          sudo apt-get clean
+          docker system prune -af 2>/dev/null || true
+          echo "=== Miejsce po czyszczeniu ==="
+          df -h
 
       - name: Install system deps
         run: |
