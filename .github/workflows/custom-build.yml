@@ -202,7 +202,8 @@ jobs:
             libasound2-dev libpulse-dev cmake make \
             libclang-dev ninja-build \
             libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
-            libpam0g-dev zip unzip python3-pip
+            libpam0g-dev zip unzip python3-pip \
+            perl pkg-config
 
       - name: Install ARM64 cross-compiler
         if: matrix.job.arch == 'arm64'
@@ -270,7 +271,13 @@ jobs:
         run: |
           $VCPKG_ROOT/vcpkg install \
             --triplet ${{ matrix.job.triplet }} \
-            --x-install-root="$VCPKG_ROOT/installed"
+            --x-install-root="$VCPKG_ROOT/installed" || {
+              echo "=== aom config log ==="
+              cat $VCPKG_ROOT/buildtrees/aom/config-${{ matrix.job.triplet }}-rel-out.log 2>/dev/null || true
+              cat $VCPKG_ROOT/buildtrees/aom/config-${{ matrix.job.triplet }}-rel-err.log 2>/dev/null || true
+              cat $VCPKG_ROOT/buildtrees/detect_compiler/config-${{ matrix.job.triplet }}-rel-out.log 2>/dev/null || true
+              exit 1
+            }
 
       - name: Build RustDesk
         run: python3 build.py --hwcodec --flutter
