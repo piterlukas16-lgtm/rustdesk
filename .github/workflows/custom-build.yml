@@ -137,7 +137,7 @@ jobs:
       matrix:
         job:
           - { arch: x86_64, target: x86_64-unknown-linux-gnu,   triplet: x64-linux,   runs-on: ubuntu-22.04          }
-          - { arch: arm64,  target: aarch64-unknown-linux-gnu,   triplet: arm64-linux,  runs-on: ubuntu-22.04-arm      }
+          - { arch: arm64,  target: aarch64-unknown-linux-gnu,   triplet: arm64-linux,  runs-on: ubuntu-22.04          }
     steps:
       - name: Export cache env
         uses: actions/github-script@v6
@@ -145,6 +145,12 @@ jobs:
           script: |
             core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
+      - name: Set up QEMU (for arm64 cross-build)
+        if: matrix.job.arch == 'arm64'
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
 
       - name: Checkout
         uses: actions/checkout@v4
@@ -274,7 +280,7 @@ jobs:
       matrix:
         job:
           - { arch: x86_64, target: x86_64-apple-darwin,  vcpkg-triplet: x64-osx,   runs-on: macos-13        }
-          - { arch: arm64,  target: aarch64-apple-darwin,  vcpkg-triplet: arm64-osx,  runs-on: macos-14-xlarge }
+          - { arch: arm64,  target: aarch64-apple-darwin,  vcpkg-triplet: arm64-osx,  runs-on: macos-14 }
     steps:
       - name: Export cache env
         uses: actions/github-script@v6
@@ -382,6 +388,12 @@ jobs:
           script: |
             core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
+      - name: Set up QEMU (for arm64 cross-build)
+        if: matrix.job.arch == 'arm64'
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
 
       - name: Checkout
         uses: actions/checkout@v4
